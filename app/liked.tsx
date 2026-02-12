@@ -337,7 +337,6 @@ const styles = StyleSheet.create({
   },
   logo: {
     fontSize: 46,
-    fontWeight: '800',
     letterSpacing: 0.4,
     fontFamily: Typography.logo,
   },
@@ -345,7 +344,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 16,
     fontSize: 30,
-    fontWeight: '900',
     fontFamily: Typography.heading,
   },
   emptyWrap: {
@@ -356,7 +354,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 18,
-    fontWeight: '700',
     textAlign: 'center',
     fontFamily: Typography.body,
   },
@@ -381,7 +378,6 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 22,
-    fontWeight: '900',
     textTransform: 'uppercase',
     fontFamily: Typography.heading,
   },
@@ -422,7 +418,6 @@ const styles = StyleSheet.create({
   },
   modalName: {
     fontSize: 28,
-    fontWeight: '900',
     textTransform: 'uppercase',
     fontFamily: Typography.logo,
   },
@@ -443,6 +438,5 @@ const styles = StyleSheet.create({
   detailText: {
     fontSize: 13,
     fontFamily: Typography.body,
-    fontWeight: '700',
   },
 });

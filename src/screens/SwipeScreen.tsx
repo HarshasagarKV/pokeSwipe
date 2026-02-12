@@ -374,7 +374,6 @@ const styles = StyleSheet.create({
   },
   likedButtonText: {
     fontSize: 16,
-    fontWeight: '800',
     fontFamily: Typography.body,
   },
   superLikeFxWrap: {

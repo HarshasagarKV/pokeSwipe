@@ -381,7 +381,6 @@ const styles = StyleSheet.create({
   },
   likeText: {
     fontSize: 22,
-    fontWeight: '900',
     color: '#15803D',
     letterSpacing: 1,
     fontFamily: Typography.logo,
@@ -403,14 +402,12 @@ const styles = StyleSheet.create({
   },
   dislikeText: {
     fontSize: 22,
-    fontWeight: '900',
     color: '#B91C1C',
     letterSpacing: 1,
     fontFamily: Typography.logo,
   },
   pokemonName: {
     fontSize: 40,
-    fontWeight: '900',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
     fontFamily: Typography.logo,
@@ -449,7 +446,6 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 14,
-    fontWeight: '900',
     fontFamily: Typography.body,
   },
   buttonsContainer: {
