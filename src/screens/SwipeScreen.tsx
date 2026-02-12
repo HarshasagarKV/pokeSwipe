@@ -2,7 +2,7 @@ import { Audio } from 'expo-av';
 import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -32,6 +32,73 @@ import { setThemeMode } from '../store/uiSlice';
 
 const MIN_QUEUE_SIZE = 4;
 const SUPERLIKE_BALLS = 10;
+const ICONIC_POKEMON = new Set(['PIKACHU', 'CHARIZARD', 'MEWTWO', 'EEVEE', 'SNORLAX']);
+const SPEED_HINTS = ['speed', 'quick', 'swift', 'agility', 'dash', 'motor', 'surge'];
+const AGGRESSIVE_TYPES = new Set(['fire', 'fighting', 'electric', 'dragon', 'dark', 'poison']);
+const AGGRESSIVE_HINTS = ['blaze', 'rage', 'power', 'attack', 'intimidate', 'fury', 'claw', 'rough', 'moxie'];
+
+type SwipeInsight = {
+  line1: string;
+  line2: string;
+};
+
+const titleCase = (value: string) =>
+  value
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const getPreferenceInsight = (
+  history: { liked: boolean; types?: string[]; abilities?: string[] }[]
+): SwipeInsight | null => {
+  if (history.length < 5) return null;
+
+  const likedOnly = history.filter((item) => item.liked);
+  const source = likedOnly.length >= 3 ? likedOnly : history;
+
+  const typeCount = new Map<string, number>();
+  let speedScore = 0;
+  let aggressiveScore = 0;
+
+  source.forEach((item) => {
+    item.types?.forEach((type) => {
+      const key = type.toLowerCase();
+      typeCount.set(key, (typeCount.get(key) ?? 0) + 1);
+
+      if (AGGRESSIVE_TYPES.has(key)) {
+        aggressiveScore += 1;
+      }
+      if (key === 'electric' || key === 'flying') {
+        speedScore += 1;
+      }
+    });
+
+    item.abilities?.forEach((ability) => {
+      const lower = ability.toLowerCase();
+      if (SPEED_HINTS.some((hint) => lower.includes(hint))) {
+        speedScore += 1;
+      }
+      if (AGGRESSIVE_HINTS.some((hint) => lower.includes(hint))) {
+        aggressiveScore += 1;
+      }
+    });
+  });
+
+  const sortedTypes = Array.from(typeCount.entries()).sort((a, b) => b[1] - a[1]);
+  const primaryType = titleCase(sortedTypes[0]?.[0] ?? 'mixed');
+  const secondaryType = sortedTypes[1]?.[0];
+  const secondAffinity =
+    speedScore >= Math.max(2, Math.floor(source.length / 2))
+      ? 'Speed'
+      : titleCase(secondaryType ?? 'Balanced');
+
+  const isAggressive = aggressiveScore >= Math.max(2, Math.floor(source.length / 2));
+
+  return {
+    line1: `You prefer ${primaryType} & ${secondAffinity} types`,
+    line2: `You like ${isAggressive ? 'aggressive' : 'balanced'} Pokémon`,
+  };
+};
 
 export default function SwipeScreen() {
   const dispatch = useDispatch();
@@ -40,6 +107,7 @@ export default function SwipeScreen() {
   const isDark = themeMode ? themeMode === 'dark' : colorScheme === 'dark';
   const theme = isDark ? PALETTE.dark : PALETTE.light;
   const likedCount = useSelector((state: RootState) => state.pokemon.likedPokemon.length);
+  const swipeHistory = useSelector((state: RootState) => state.pokemon.history);
 
   const initialQueueRef = useRef<QueuedPokemon[]>(takePreloadedPokemonQueue(MIN_QUEUE_SIZE));
   const [pokemonQueue, setPokemonQueue] = useState<QueuedPokemon[]>(initialQueueRef.current);
@@ -48,10 +116,22 @@ export default function SwipeScreen() {
   const isRefillingRef = useRef(false);
 
   const [showSuperLikeFx, setShowSuperLikeFx] = useState(false);
+  const [showIconicFx, setShowIconicFx] = useState(false);
   const superLikeAnimRef = useRef(
     Array.from({ length: SUPERLIKE_BALLS }, () => new Animated.Value(0))
   );
   const superLikeSoundRef = useRef<Audio.Sound | null>(null);
+  const iconicFxAnim = useRef(new Animated.Value(0)).current;
+  const insightAnim = useRef(new Animated.Value(0)).current;
+  const pokeballSpinAnim = useRef(new Animated.Value(0)).current;
+  const likedCountScaleAnim = useRef(new Animated.Value(1)).current;
+  const previousLikedCountRef = useRef(likedCount);
+
+  const preferenceInsight = useMemo(() => getPreferenceInsight(swipeHistory), [swipeHistory]);
+  const pokeballSpin = pokeballSpinAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   const setQueue = (nextQueue: QueuedPokemon[]) => {
     queueRef.current = nextQueue;
@@ -120,7 +200,13 @@ export default function SwipeScreen() {
 
   const playLikeFeedback = useCallback(() => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Vibration.vibrate(24);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Vibration.vibrate(20);
+  }, []);
+
+  const playDislikeFeedback = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Vibration.vibrate(16);
   }, []);
 
   const playSuperLikeFeedback = useCallback(() => {
@@ -153,6 +239,74 @@ export default function SwipeScreen() {
     });
   }, []);
 
+  const triggerIconicFx = useCallback(() => {
+    iconicFxAnim.setValue(0);
+    setShowIconicFx(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    Animated.sequence([
+      Animated.timing(iconicFxAnim, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.delay(260),
+      Animated.timing(iconicFxAnim, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => setShowIconicFx(false));
+  }, [iconicFxAnim]);
+
+  useEffect(() => {
+    if (!preferenceInsight) return;
+
+    Animated.timing(insightAnim, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [insightAnim, preferenceInsight]);
+
+  useEffect(() => {
+    const spinLoop = Animated.loop(
+      Animated.timing(pokeballSpinAnim, {
+        toValue: 1,
+        duration: 2600,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    spinLoop.start();
+    return () => spinLoop.stop();
+  }, [pokeballSpinAnim]);
+
+  useEffect(() => {
+    const previousLikedCount = previousLikedCountRef.current;
+    if (likedCount > previousLikedCount) {
+      Animated.sequence([
+        Animated.timing(likedCountScaleAnim, {
+          toValue: 1.26,
+          duration: 150,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(likedCountScaleAnim, {
+          toValue: 1,
+          duration: 170,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+    previousLikedCountRef.current = likedCount;
+  }, [likedCount, likedCountScaleAnim]);
+
   const handleSwipe = async (
     pokemon: QueuedPokemon,
     action: typeof likePokemon | typeof dislikePokemon,
@@ -163,9 +317,15 @@ export default function SwipeScreen() {
     if (action === likePokemon && !isSuperLike) {
       playLikeFeedback();
     }
+    if (action === dislikePokemon) {
+      playDislikeFeedback();
+    }
     if (isSuperLike) {
       playSuperLikeFeedback();
       triggerSuperLikeFx();
+    }
+    if (ICONIC_POKEMON.has(pokemon.name)) {
+      triggerIconicFx();
     }
 
     const workingQueue = [...queueRef.current];
@@ -231,7 +391,25 @@ export default function SwipeScreen() {
           },
         ]}
       >
-        <Text style={[styles.likedButtonText, { color: theme.textPrimary }]}>Liked {likedCount}</Text>
+        <View style={styles.likedButtonContent}>
+          <Animated.View style={[styles.miniPokeball, { transform: [{ rotate: pokeballSpin }] }]}>
+            <View style={styles.miniPokeballTop} />
+            <View style={styles.miniPokeballBottom} />
+            <View style={styles.miniPokeballBand} />
+            <View style={styles.miniPokeballCenter} />
+          </Animated.View>
+          <Animated.Text
+            style={[
+              styles.likedCountText,
+              {
+                color: theme.textPrimary,
+                transform: [{ scale: likedCountScaleAnim }],
+              },
+            ]}
+          >
+            {likedCount}
+          </Animated.Text>
+        </View>
       </Pressable>
 
       <View style={styles.cardStack}>
@@ -248,6 +426,56 @@ export default function SwipeScreen() {
           />
         </View>
       </View>
+
+      {preferenceInsight ? (
+        <Animated.View
+          style={[
+            styles.insightCard,
+            {
+              opacity: insightAnim,
+              transform: [
+                {
+                  translateY: insightAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [12, 0],
+                  }),
+                },
+              ],
+              backgroundColor: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
+              borderColor: isDark ? '#475569' : '#CBD5E1',
+            },
+          ]}
+        >
+          <Text style={[styles.insightText, { color: theme.textPrimary }]}>
+            {preferenceInsight.line1}
+          </Text>
+          <Text style={[styles.insightText, { color: theme.textPrimary }]}>
+            {preferenceInsight.line2}
+          </Text>
+        </Animated.View>
+      ) : null}
+
+      {showIconicFx ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.iconicWrap,
+            {
+              opacity: iconicFxAnim,
+              transform: [
+                {
+                  scale: iconicFxAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.8, 1.08],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.iconicText}>ICONIC MOMENT</Text>
+        </Animated.View>
+      ) : null}
 
       {showSuperLikeFx ? (
         <View pointerEvents="none" style={styles.superLikeFxWrap}>
@@ -372,9 +600,86 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
-  likedButtonText: {
-    fontSize: 16,
+  likedButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  miniPokeball: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#0F172A',
+    overflow: 'hidden',
+  },
+  miniPokeballTop: {
+    flex: 1,
+    backgroundColor: '#EF4444',
+  },
+  miniPokeballBottom: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  miniPokeballBand: {
+    position: 'absolute',
+    top: 10,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#111827',
+  },
+  miniPokeballCenter: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#111827',
+    backgroundColor: '#FFFFFF',
+    top: 7,
+    left: 7,
+  },
+  likedCountText: {
+    fontSize: 18,
+    lineHeight: 20,
+    minWidth: 18,
+    textAlign: 'center',
+    fontFamily: Typography.logo,
+  },
+  insightCard: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    top: 108,
+    borderRadius: 16,
+    borderWidth: 2,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    zIndex: 15,
+    gap: 2,
+  },
+  insightText: {
+    fontSize: 18,
     fontFamily: Typography.body,
+  },
+  iconicWrap: {
+    position: 'absolute',
+    top: UI.screen.height * 0.18,
+    alignSelf: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(250,204,21,0.9)',
+    borderWidth: 2,
+    borderColor: '#78350F',
+    zIndex: 40,
+  },
+  iconicText: {
+    fontSize: 24,
+    color: '#111827',
+    letterSpacing: 0.6,
+    fontFamily: Typography.logo,
   },
   superLikeFxWrap: {
     ...StyleSheet.absoluteFillObject,

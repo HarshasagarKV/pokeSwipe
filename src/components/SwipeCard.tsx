@@ -253,13 +253,13 @@ export default function SwipeCard({
 
         <Animated.View style={[styles.likeOverlay, likeOverlayStyle]}>
           <View style={styles.likeBox}>
-            <Text style={styles.likeText}>LIKE</Text>
+            <Text style={styles.likeText}>❤️</Text>
           </View>
         </Animated.View>
 
         <Animated.View style={[styles.dislikeOverlay, dislikeOverlayStyle]}>
           <View style={styles.dislikeBox}>
-            <Text style={styles.dislikeText}>NOPE</Text>
+            <Text style={styles.dislikeText}>❌</Text>
           </View>
         </Animated.View>
 
@@ -380,10 +380,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#DCFCE7',
   },
   likeText: {
-    fontSize: 22,
+    fontSize: 34,
     color: '#15803D',
-    letterSpacing: 1,
     fontFamily: Typography.logo,
+    lineHeight: 36,
   },
   dislikeOverlay: {
     position: 'absolute',
@@ -401,10 +401,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEE2E2',
   },
   dislikeText: {
-    fontSize: 22,
+    fontSize: 32,
     color: '#B91C1C',
-    letterSpacing: 1,
     fontFamily: Typography.logo,
+    lineHeight: 34,
   },
   pokemonName: {
     fontSize: 40,
