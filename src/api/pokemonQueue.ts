@@ -16,6 +16,10 @@ let sequence = 0;
 let isWarming = false;
 let waitingResolvers: (() => void)[] = [];
 const DEFAULT_QUEUE_TARGET = 8;
+const canPrefetchImages =
+  typeof globalThis !== 'undefined' &&
+  typeof (globalThis as { Image?: unknown }).Image !== 'undefined' &&
+  typeof (globalThis as { document?: unknown }).document !== 'undefined';
 
 const flushWaiters = () => {
   waitingResolvers.forEach((resolve) => resolve());
@@ -27,11 +31,13 @@ const createPokemonCard = async (): Promise<QueuedPokemon | null> => {
     const data = await getRandomPokemon();
     if (!data) return null;
 
-    if (data.image) {
-      ExpoImage.prefetch(data.image);
-    }
-    if (data.imageFallback) {
-      ExpoImage.prefetch(data.imageFallback);
+    if (canPrefetchImages) {
+      if (data.image) {
+        void ExpoImage.prefetch(data.image);
+      }
+      if (data.imageFallback) {
+        void ExpoImage.prefetch(data.imageFallback);
+      }
     }
 
     return {
