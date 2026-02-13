@@ -124,6 +124,7 @@ export default function SwipeScreen() {
   const [pokemonQueue, setPokemonQueue] = useState<QueuedPokemon[]>(initialQueueRef.current);
   const [isLoading, setIsLoading] = useState(initialQueueRef.current.length === 0);
   const [isProcessingSwipe, setIsProcessingSwipe] = useState(false);
+  const isProcessingSwipeRef = useRef(false);
   const queueRef = useRef<QueuedPokemon[]>(initialQueueRef.current);
   const isRefillingRef = useRef(false);
 
@@ -500,54 +501,59 @@ export default function SwipeScreen() {
     action: typeof likePokemon | typeof dislikePokemon,
     isSuperLike = false
   ) => {
-    if (isProcessingSwipe) return;
+    if (isProcessingSwipeRef.current) return;
+    isProcessingSwipeRef.current = true;
     setIsProcessingSwipe(true);
 
-    dispatch(action(pokemon));
+    try {
+      dispatch(action(pokemon));
 
-    if (action === likePokemon && !isSuperLike) {
-      playLikeFeedback();
-    }
-    if (action === dislikePokemon) {
-      playDislikeFeedback();
-    }
-    if (isSuperLike) {
-      await Promise.all([playSuperLikeFeedback(), triggerSuperLikeFx()]);
-    }
-    const isRarePokemon = RARE_POKEMON_IDS.has(pokemon.id);
-    if (isRarePokemon) {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      triggerRarePokemonFx();
-      showCenterPopup({
-        title: `Rare sighting: ${pokemon.name}`,
-        subtitle: 'Legendary energy detected',
-        emoji: '🌟',
-        accentColor: '#38BDF8',
-      });
-    } else if ((action === likePokemon || isSuperLike) && ICONIC_POKEMON.has(pokemon.name)) {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      showCenterPopup({
-        title: `Favorite vibe: ${pokemon.name}`,
-        subtitle: 'Iconic Pokémon unlocked',
-        emoji: '⚡',
-        accentColor: '#EAB308',
-      });
-    }
-
-    const workingQueue = [...queueRef.current];
-    workingQueue.shift();
-
-    if (workingQueue.length === 0) {
-      const emergencyNext = await dequeuePokemonCard();
-      if (emergencyNext) {
-        workingQueue.push(emergencyNext);
+      if (action === likePokemon && !isSuperLike) {
+        playLikeFeedback();
       }
-    }
+      if (action === dislikePokemon) {
+        playDislikeFeedback();
+      }
+      if (isSuperLike) {
+        await Promise.all([playSuperLikeFeedback(), triggerSuperLikeFx()]);
+      }
+      const isRarePokemon = RARE_POKEMON_IDS.has(pokemon.id);
+      if (isRarePokemon) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        triggerRarePokemonFx();
+        showCenterPopup({
+          title: `Rare sighting: ${pokemon.name}`,
+          subtitle: 'Legendary energy detected',
+          emoji: '🌟',
+          accentColor: '#38BDF8',
+        });
+      } else if ((action === likePokemon || isSuperLike) && ICONIC_POKEMON.has(pokemon.name)) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        showCenterPopup({
+          title: `Favorite vibe: ${pokemon.name}`,
+          subtitle: 'Iconic Pokémon unlocked',
+          emoji: '⚡',
+          accentColor: '#EAB308',
+        });
+      }
 
-    setQueue(workingQueue);
-    prefetchFromQueue(workingQueue, 2);
-    void refillQueue();
-    setIsProcessingSwipe(false);
+      const workingQueue = [...queueRef.current];
+      workingQueue.shift();
+
+      if (workingQueue.length === 0) {
+        const emergencyNext = await dequeuePokemonCard();
+        if (emergencyNext) {
+          workingQueue.push(emergencyNext);
+        }
+      }
+
+      setQueue(workingQueue);
+      prefetchFromQueue(workingQueue, 2);
+      void refillQueue();
+    } finally {
+      isProcessingSwipeRef.current = false;
+      setIsProcessingSwipe(false);
+    }
   };
 
   const currentPokemon = pokemonQueue[0];
