@@ -16,6 +16,8 @@ const TRAVEL_DISTANCE = TRACK_WIDTH - KNOB_SIZE - PADDING * 2;
 
 export default function ThemeSwitch({ isDark, onLight, onDark }: ThemeSwitchProps) {
   const translateX = useRef(new Animated.Value(isDark ? TRAVEL_DISTANCE : 0)).current;
+  const trackBorderColor = isDark ? '#CBD5E1' : '#334155';
+  const knobBorderColor = isDark ? '#BAE6FD' : '#B45309';
 
   useEffect(() => {
     Animated.timing(translateX, {
@@ -29,7 +31,13 @@ export default function ThemeSwitch({ isDark, onLight, onDark }: ThemeSwitchProp
   return (
     <Pressable
       onPress={isDark ? onLight : onDark}
-      style={[styles.track, { backgroundColor: isDark ? '#0F172A' : '#E2E8F0' }]}
+      style={[
+        styles.track,
+        {
+          backgroundColor: isDark ? '#0F172A' : '#E2E8F0',
+          borderColor: trackBorderColor,
+        },
+      ]}
     >
       <View style={styles.iconWrapLeft}>
         <Ionicons name="sunny" size={16} color={isDark ? '#64748B' : '#F59E0B'} />
@@ -43,7 +51,7 @@ export default function ThemeSwitch({ isDark, onLight, onDark }: ThemeSwitchProp
           styles.knob,
           {
             backgroundColor: isDark ? '#1E293B' : '#FFFFFF',
-            borderColor: isDark ? '#93C5FD' : '#F59E0B',
+            borderColor: knobBorderColor,
             transform: [{ translateX }],
           },
         ]}
