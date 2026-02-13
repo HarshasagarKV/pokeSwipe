@@ -123,6 +123,7 @@ export default function SwipeScreen() {
   const initialQueueRef = useRef<QueuedPokemon[]>(takePreloadedPokemonQueue(MIN_QUEUE_SIZE));
   const [pokemonQueue, setPokemonQueue] = useState<QueuedPokemon[]>(initialQueueRef.current);
   const [isLoading, setIsLoading] = useState(initialQueueRef.current.length === 0);
+  const [isProcessingSwipe, setIsProcessingSwipe] = useState(false);
   const queueRef = useRef<QueuedPokemon[]>(initialQueueRef.current);
   const isRefillingRef = useRef(false);
 
@@ -499,6 +500,9 @@ export default function SwipeScreen() {
     action: typeof likePokemon | typeof dislikePokemon,
     isSuperLike = false
   ) => {
+    if (isProcessingSwipe) return;
+    setIsProcessingSwipe(true);
+
     dispatch(action(pokemon));
 
     if (action === likePokemon && !isSuperLike) {
@@ -543,6 +547,7 @@ export default function SwipeScreen() {
     setQueue(workingQueue);
     prefetchFromQueue(workingQueue, 2);
     void refillQueue();
+    setIsProcessingSwipe(false);
   };
 
   const currentPokemon = pokemonQueue[0];
@@ -644,7 +649,7 @@ export default function SwipeScreen() {
             key={`card-${currentPokemon.id}-${currentPokemon.name}`}
             pokemon={currentPokemon}
             isDark={isDark}
-            isInteractive
+            isInteractive={!isProcessingSwipe}
             onSwipeRight={(p) => handleSwipe(p as QueuedPokemon, likePokemon)}
             onSwipeLeft={(p) => handleSwipe(p as QueuedPokemon, dislikePokemon)}
             onSuperLike={(p) => handleSwipe(p as QueuedPokemon, likePokemon, true)}
