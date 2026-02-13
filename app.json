@@ -3,7 +3,7 @@
     "name": "pokeswipe",
     "slug": "pokeswipe",
     "updates": {
-      "enabled": false,
+      "enabled": true,
       "url": "https://u.expo.dev/bfe6d692-b41d-4d6c-a796-3405697281fd"
     },
     "version": "1.0.0",
