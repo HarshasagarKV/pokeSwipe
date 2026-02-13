@@ -1,6 +1,6 @@
 import { Audio } from 'expo-av';
-import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { Image as ExpoImage } from 'expo-image';
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -31,15 +31,26 @@ import { dislikePokemon, likePokemon } from '../store/pokemonSlice';
 import { setThemeMode } from '../store/uiSlice';
 
 const MIN_QUEUE_SIZE = 4;
-const SUPERLIKE_BALLS = 10;
+const SUPERLIKE_BALLS = 34;
+const RARE_BALLS = 14;
 const ICONIC_POKEMON = new Set(['PIKACHU', 'CHARIZARD', 'MEWTWO', 'EEVEE', 'SNORLAX']);
+const RARE_POKEMON_IDS = new Set([144, 145, 146, 150, 151]);
 const SPEED_HINTS = ['speed', 'quick', 'swift', 'agility', 'dash', 'motor', 'surge'];
 const AGGRESSIVE_TYPES = new Set(['fire', 'fighting', 'electric', 'dragon', 'dark', 'poison']);
 const AGGRESSIVE_HINTS = ['blaze', 'rage', 'power', 'attack', 'intimidate', 'fury', 'claw', 'rough', 'moxie'];
+const FEEDBACK_VISIBLE_MS = 1500;
+const SUPERLIKE_FX_DURATION_MS = 1450;
 
 type SwipeInsight = {
   line1: string;
   line2: string;
+};
+
+type CenterPopup = {
+  title: string;
+  subtitle?: string;
+  emoji?: string;
+  accentColor: string;
 };
 
 const titleCase = (value: string) =>
@@ -116,27 +127,56 @@ export default function SwipeScreen() {
   const isRefillingRef = useRef(false);
 
   const [showSuperLikeFx, setShowSuperLikeFx] = useState(false);
-  const [showIconicFx, setShowIconicFx] = useState(false);
+  const [showRareFx, setShowRareFx] = useState(false);
+  const [centerPopup, setCenterPopup] = useState<CenterPopup | null>(null);
   const superLikeAnimRef = useRef(
     Array.from({ length: SUPERLIKE_BALLS }, () => new Animated.Value(0))
   );
+  const rareAnimRef = useRef(Array.from({ length: RARE_BALLS }, () => new Animated.Value(0)));
   const superLikeSoundRef = useRef<Audio.Sound | null>(null);
-  const iconicFxAnim = useRef(new Animated.Value(0)).current;
-  const insightAnim = useRef(new Animated.Value(0)).current;
   const pokeballSpinAnim = useRef(new Animated.Value(0)).current;
   const likedCountScaleAnim = useRef(new Animated.Value(1)).current;
+  const likedPlusOneAnim = useRef(new Animated.Value(0)).current;
+  const likedPulseAnim = useRef(new Animated.Value(0)).current;
   const previousLikedCountRef = useRef(likedCount);
+  const popupScaleAnim = useRef(new Animated.Value(0.82)).current;
+  const popupOpacityAnim = useRef(new Animated.Value(0)).current;
+  const popupTiltAnim = useRef(new Animated.Value(0)).current;
+  const popupTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastInsightShownAtRef = useRef(0);
 
   const preferenceInsight = useMemo(() => getPreferenceInsight(swipeHistory), [swipeHistory]);
   const pokeballSpin = pokeballSpinAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
+  const popupTilt = popupTiltAnim.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-2.8deg', '0deg', '2.8deg'],
+  });
+  const likedPlusOneTranslateY = likedPlusOneAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [6, -16],
+  });
+  const likedPulseScale = likedPulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.78, 1.32],
+  });
 
   const setQueue = (nextQueue: QueuedPokemon[]) => {
     queueRef.current = nextQueue;
     setPokemonQueue(nextQueue);
   };
+
+  const prefetchFromQueue = useCallback((cards: QueuedPokemon[], count = 2) => {
+    const urls = cards
+      .slice(0, count)
+      .flatMap((pokemon) => [pokemon.image, pokemon.imageFallback])
+      .filter((value): value is string => Boolean(value));
+
+    if (urls.length === 0) return;
+    void ExpoImage.prefetch(Array.from(new Set(urls)), 'memory-disk');
+  }, []);
 
   const preloadUpcomingImages = useCallback(async () => {
     const urls = pokemonQueue
@@ -179,9 +219,21 @@ export default function SwipeScreen() {
   useEffect(() => {
     const loadSound = async () => {
       try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          allowsRecordingIOS: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+          staysActiveInBackground: false,
+        });
+
         const { sound } = await Audio.Sound.createAsync(
           require('../../assets/sounds/super-like.wav'),
-          { volume: 0.8 }
+          {
+            volume: 0.9,
+            shouldPlay: false,
+            isLooping: false,
+          }
         );
         superLikeSoundRef.current = sound;
       } catch (error) {
@@ -198,6 +250,14 @@ export default function SwipeScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (popupTimeoutRef.current) {
+        clearTimeout(popupTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const playLikeFeedback = useCallback(() => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -209,68 +269,162 @@ export default function SwipeScreen() {
     Vibration.vibrate(16);
   }, []);
 
-  const playSuperLikeFeedback = useCallback(() => {
+  const playSuperLikeFeedback = useCallback(async () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     Vibration.vibrate([0, 40, 30, 70, 30, 120]);
 
-    if (superLikeSoundRef.current) {
-      void superLikeSoundRef.current.replayAsync();
+    try {
+      let sound = superLikeSoundRef.current;
+      if (!sound) {
+        const created = await Audio.Sound.createAsync(
+          require('../../assets/sounds/super-like.wav'),
+          {
+            shouldPlay: false,
+            volume: 0.9,
+            isLooping: false,
+          }
+        );
+        sound = created.sound;
+        superLikeSoundRef.current = sound;
+      }
+
+      const replayStatus = await sound.replayAsync();
+      if (replayStatus.isLoaded) {
+        const remainingMs = Math.max(
+          650,
+          Math.min(2200, (replayStatus.durationMillis ?? 900) - (replayStatus.positionMillis ?? 0))
+        );
+        await new Promise((resolve) => setTimeout(resolve, remainingMs));
+      }
+    } catch (error) {
+      console.error('Error playing super like sound:', error);
+      await new Promise((resolve) => setTimeout(resolve, 900));
     }
   }, []);
 
-  const triggerSuperLikeFx = useCallback(() => {
+  const triggerSuperLikeFx = useCallback(async () => {
     const animatedValues = superLikeAnimRef.current;
     animatedValues.forEach((value) => value.setValue(0));
     setShowSuperLikeFx(true);
+
+    await new Promise<void>((resolve) => {
+      Animated.parallel(
+        animatedValues.map((value, index) =>
+          Animated.timing(value, {
+            toValue: 1,
+            duration: SUPERLIKE_FX_DURATION_MS,
+            delay: index * 45,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          })
+        )
+      ).start(() => {
+        setShowSuperLikeFx(false);
+        resolve();
+      });
+    });
+  }, []);
+
+  const triggerRarePokemonFx = useCallback(() => {
+    const animatedValues = rareAnimRef.current;
+    animatedValues.forEach((value) => value.setValue(0));
+    setShowRareFx(true);
 
     Animated.parallel(
       animatedValues.map((value, index) =>
         Animated.timing(value, {
           toValue: 1,
-          duration: 850,
-          delay: index * 45,
+          duration: 920,
+          delay: index * 32,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         })
       )
     ).start(() => {
-      setShowSuperLikeFx(false);
+      setShowRareFx(false);
     });
   }, []);
 
-  const triggerIconicFx = useCallback(() => {
-    iconicFxAnim.setValue(0);
-    setShowIconicFx(true);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  const showCenterPopup = useCallback(
+    (popup: CenterPopup) => {
+      if (popupTimeoutRef.current) {
+        clearTimeout(popupTimeoutRef.current);
+      }
 
-    Animated.sequence([
-      Animated.timing(iconicFxAnim, {
-        toValue: 1,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.delay(260),
-      Animated.timing(iconicFxAnim, {
-        toValue: 0,
-        duration: 220,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start(() => setShowIconicFx(false));
-  }, [iconicFxAnim]);
+      setCenterPopup(popup);
+      popupScaleAnim.setValue(0.82);
+      popupOpacityAnim.setValue(0);
+      popupTiltAnim.setValue(0);
+
+      Animated.parallel([
+        Animated.timing(popupOpacityAnim, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(popupScaleAnim, {
+          toValue: 1,
+          damping: 11,
+          stiffness: 160,
+          mass: 0.75,
+          useNativeDriver: true,
+        }),
+        Animated.sequence([
+          Animated.timing(popupTiltAnim, {
+            toValue: 1,
+            duration: 120,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(popupTiltAnim, {
+            toValue: -1,
+            duration: 140,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(popupTiltAnim, {
+            toValue: 0,
+            duration: 120,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start();
+
+      popupTimeoutRef.current = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(popupOpacityAnim, {
+            toValue: 0,
+            duration: 180,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(popupScaleAnim, {
+            toValue: 0.9,
+            duration: 180,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start(() => setCenterPopup(null));
+      }, FEEDBACK_VISIBLE_MS);
+    },
+    [popupOpacityAnim, popupScaleAnim, popupTiltAnim]
+  );
 
   useEffect(() => {
-    if (!preferenceInsight) return;
+    if (!preferenceInsight || swipeHistory.length < 10 || swipeHistory.length % 10 !== 0) return;
+    if (lastInsightShownAtRef.current === swipeHistory.length) return;
 
-    Animated.timing(insightAnim, {
-      toValue: 1,
-      duration: 280,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [insightAnim, preferenceInsight]);
+    lastInsightShownAtRef.current = swipeHistory.length;
+    showCenterPopup({
+      title: preferenceInsight.line1,
+      subtitle: preferenceInsight.line2,
+      emoji: '🔥',
+      accentColor: '#F97316',
+    });
+  }, [preferenceInsight, showCenterPopup, swipeHistory.length]);
 
   useEffect(() => {
     const spinLoop = Animated.loop(
@@ -289,23 +443,56 @@ export default function SwipeScreen() {
   useEffect(() => {
     const previousLikedCount = previousLikedCountRef.current;
     if (likedCount > previousLikedCount) {
-      Animated.sequence([
-        Animated.timing(likedCountScaleAnim, {
-          toValue: 1.26,
-          duration: 150,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(likedCountScaleAnim, {
-          toValue: 1,
-          duration: 170,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }),
+      likedPlusOneAnim.setValue(0);
+      likedPulseAnim.setValue(0);
+
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(likedCountScaleAnim, {
+            toValue: 1.34,
+            duration: 130,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(likedCountScaleAnim, {
+            toValue: 1,
+            duration: 180,
+            easing: Easing.inOut(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(likedPlusOneAnim, {
+            toValue: 1,
+            duration: 260,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(likedPlusOneAnim, {
+            toValue: 0,
+            duration: 240,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(likedPulseAnim, {
+            toValue: 1,
+            duration: 220,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(likedPulseAnim, {
+            toValue: 0,
+            duration: 220,
+            easing: Easing.in(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]),
       ]).start();
     }
     previousLikedCountRef.current = likedCount;
-  }, [likedCount, likedCountScaleAnim]);
+  }, [likedCount, likedCountScaleAnim, likedPlusOneAnim, likedPulseAnim]);
 
   const handleSwipe = async (
     pokemon: QueuedPokemon,
@@ -321,11 +508,26 @@ export default function SwipeScreen() {
       playDislikeFeedback();
     }
     if (isSuperLike) {
-      playSuperLikeFeedback();
-      triggerSuperLikeFx();
+      await Promise.all([playSuperLikeFeedback(), triggerSuperLikeFx()]);
     }
-    if (ICONIC_POKEMON.has(pokemon.name)) {
-      triggerIconicFx();
+    const isRarePokemon = RARE_POKEMON_IDS.has(pokemon.id);
+    if (isRarePokemon) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      triggerRarePokemonFx();
+      showCenterPopup({
+        title: `Rare sighting: ${pokemon.name}`,
+        subtitle: 'Legendary energy detected',
+        emoji: '🌟',
+        accentColor: '#38BDF8',
+      });
+    } else if ((action === likePokemon || isSuperLike) && ICONIC_POKEMON.has(pokemon.name)) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      showCenterPopup({
+        title: `Favorite vibe: ${pokemon.name}`,
+        subtitle: 'Iconic Pokémon unlocked',
+        emoji: '⚡',
+        accentColor: '#EAB308',
+      });
     }
 
     const workingQueue = [...queueRef.current];
@@ -339,6 +541,7 @@ export default function SwipeScreen() {
     }
 
     setQueue(workingQueue);
+    prefetchFromQueue(workingQueue, 2);
     void refillQueue();
   };
 
@@ -398,6 +601,16 @@ export default function SwipeScreen() {
             <View style={styles.miniPokeballBand} />
             <View style={styles.miniPokeballCenter} />
           </Animated.View>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.likedPulseRing,
+              {
+                opacity: likedPulseAnim,
+                transform: [{ scale: likedPulseScale }],
+              },
+            ]}
+          />
           <Animated.Text
             style={[
               styles.likedCountText,
@@ -408,6 +621,18 @@ export default function SwipeScreen() {
             ]}
           >
             {likedCount}
+          </Animated.Text>
+          <Animated.Text
+            pointerEvents="none"
+            style={[
+              styles.plusOneText,
+              {
+                opacity: likedPlusOneAnim,
+                transform: [{ translateY: likedPlusOneTranslateY }, { scale: likedCountScaleAnim }],
+              },
+            ]}
+          >
+            +1
           </Animated.Text>
         </View>
       </Pressable>
@@ -427,54 +652,42 @@ export default function SwipeScreen() {
         </View>
       </View>
 
-      {preferenceInsight ? (
-        <Animated.View
-          style={[
-            styles.insightCard,
-            {
-              opacity: insightAnim,
-              transform: [
-                {
-                  translateY: insightAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [12, 0],
-                  }),
-                },
-              ],
-              backgroundColor: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
-              borderColor: isDark ? '#475569' : '#CBD5E1',
-            },
-          ]}
-        >
-          <Text style={[styles.insightText, { color: theme.textPrimary }]}>
-            {preferenceInsight.line1}
-          </Text>
-          <Text style={[styles.insightText, { color: theme.textPrimary }]}>
-            {preferenceInsight.line2}
-          </Text>
-        </Animated.View>
-      ) : null}
-
-      {showIconicFx ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.iconicWrap,
-            {
-              opacity: iconicFxAnim,
-              transform: [
-                {
-                  scale: iconicFxAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.8, 1.08],
-                  }),
-                },
-              ],
-            },
-          ]}
-        >
-          <Text style={styles.iconicText}>ICONIC MOMENT</Text>
-        </Animated.View>
+      {centerPopup ? (
+        <>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.popupBackdrop,
+              {
+                opacity: popupOpacityAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 1],
+                }),
+                backgroundColor: isDark ? 'rgba(2,6,23,0.46)' : 'rgba(15,23,42,0.26)',
+              },
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.centerPopupWrap,
+              {
+                opacity: popupOpacityAnim,
+                transform: [{ scale: popupScaleAnim }, { rotate: popupTilt }],
+                backgroundColor: isDark ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.96)',
+                borderColor: centerPopup.accentColor,
+              },
+            ]}
+          >
+            {centerPopup.emoji ? <Text style={styles.centerPopupEmoji}>{centerPopup.emoji}</Text> : null}
+            <Text style={[styles.centerPopupTitle, { color: theme.textPrimary }]}>{centerPopup.title}</Text>
+            {centerPopup.subtitle ? (
+              <Text style={[styles.centerPopupSubtitle, { color: theme.textSecondary }]}>
+                {centerPopup.subtitle}
+              </Text>
+            ) : null}
+          </Animated.View>
+        </>
       ) : null}
 
       {showSuperLikeFx ? (
@@ -484,7 +697,7 @@ export default function SwipeScreen() {
               styles.superLikeText,
               {
                 opacity: superLikeAnimRef.current[0].interpolate({
-                  inputRange: [0, 0.15, 0.85, 1],
+                  inputRange: [0, 0.08, 0.94, 1],
                   outputRange: [0, 1, 1, 0],
                 }),
                 transform: [
@@ -501,23 +714,24 @@ export default function SwipeScreen() {
             SUPER SWIPED!
           </Animated.Text>
           {superLikeAnimRef.current.map((progress, index) => {
-            const direction = index % 2 === 0 ? -1 : 1;
-            const spread = 20 + (index % 4) * 24;
+            const lane = (index + 1) / (SUPERLIKE_BALLS + 1);
+            const left = UI.screen.width * lane - 14;
+            const sideJitter = (index % 2 === 0 ? -1 : 1) * (8 + (index % 4) * 6);
             const translateX = progress.interpolate({
               inputRange: [0, 1],
-              outputRange: [0, direction * spread],
+              outputRange: [0, sideJitter],
             });
             const translateY = progress.interpolate({
               inputRange: [0, 1],
-              outputRange: [0, -UI.screen.height * 0.9],
+              outputRange: [-120 - (index % 7) * 24, UI.screen.height * 1.08],
             });
             const scale = progress.interpolate({
-              inputRange: [0, 0.5, 1],
-              outputRange: [0.6, 1, 0.72],
+              inputRange: [0, 0.18, 1],
+              outputRange: [0.45, 0.95, 0.88],
             });
             const opacity = progress.interpolate({
-              inputRange: [0, 0.7, 1],
-              outputRange: [0, 1, 0],
+              inputRange: [0, 0.12, 0.92, 1],
+              outputRange: [0, 1, 1, 0],
             });
 
             return (
@@ -526,6 +740,8 @@ export default function SwipeScreen() {
                 style={[
                   styles.superBall,
                   {
+                    top: 0,
+                    left,
                     opacity,
                     transform: [{ translateX }, { translateY }, { scale }],
                   },
@@ -535,6 +751,49 @@ export default function SwipeScreen() {
                 <View style={styles.superBallBottom} />
                 <View style={styles.superBallBand} />
                 <View style={styles.superBallCenter} />
+              </Animated.View>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {showRareFx ? (
+        <View pointerEvents="none" style={styles.rareFxWrap}>
+          {rareAnimRef.current.map((progress, index) => {
+            const angle = (index / RARE_BALLS) * Math.PI * 2;
+            const distance = 36 + (index % 4) * 18;
+            const translateX = progress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, Math.cos(angle) * distance],
+            });
+            const translateY = progress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, -140 + Math.sin(angle) * 26],
+            });
+            const scale = progress.interpolate({
+              inputRange: [0, 0.35, 1],
+              outputRange: [0.5, 1.08, 0.7],
+            });
+            const opacity = progress.interpolate({
+              inputRange: [0, 0.75, 1],
+              outputRange: [0, 1, 0],
+            });
+
+            return (
+              <Animated.View
+                key={`rare-ball-${index}`}
+                style={[
+                  styles.rareBall,
+                  {
+                    opacity,
+                    transform: [{ translateX }, { translateY }, { scale }],
+                  },
+                ]}
+              >
+                <View style={styles.rareBallTop} />
+                <View style={styles.rareBallBottom} />
+                <View style={styles.rareBallBand} />
+                <View style={styles.rareBallCenter} />
               </Animated.View>
             );
           })}
@@ -601,6 +860,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   likedButtonContent: {
+    position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -647,45 +907,66 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: Typography.logo,
   },
-  insightCard: {
+  likedPulseRing: {
     position: 'absolute',
-    left: 16,
-    right: 16,
-    top: 108,
-    borderRadius: 16,
+    right: -8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     borderWidth: 2,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    zIndex: 15,
-    gap: 2,
+    borderColor: '#F97316',
   },
-  insightText: {
+  plusOneText: {
+    position: 'absolute',
+    right: -18,
+    top: -16,
     fontSize: 18,
-    fontFamily: Typography.body,
+    color: '#F97316',
+    fontFamily: Typography.logo,
   },
-  iconicWrap: {
+  centerPopupWrap: {
     position: 'absolute',
-    top: UI.screen.height * 0.18,
+    top: UI.screen.height * 0.36,
+    maxWidth: UI.screen.width * 0.86,
     alignSelf: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: 'rgba(250,204,21,0.9)',
-    borderWidth: 2,
-    borderColor: '#78350F',
-    zIndex: 40,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 20,
+    borderWidth: 3,
+    zIndex: 45,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 14,
   },
-  iconicText: {
-    fontSize: 24,
-    color: '#111827',
-    letterSpacing: 0.6,
+  popupBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 42,
+  },
+  centerPopupEmoji: {
+    fontSize: 28,
+    lineHeight: 32,
+  },
+  centerPopupTitle: {
+    fontSize: 26,
+    textAlign: 'center',
+    fontFamily: Typography.logo,
+  },
+  centerPopupSubtitle: {
+    fontSize: 18,
+    textAlign: 'center',
     fontFamily: Typography.logo,
   },
   superLikeFxWrap: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingBottom: 120,
+    justifyContent: 'flex-start',
+    zIndex: 140,
+    elevation: 140,
   },
   superLikeText: {
     position: 'absolute',
@@ -698,7 +979,8 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 3, height: 4 },
     textShadowRadius: 2,
     fontFamily: Typography.logo,
-    zIndex: 60,
+    zIndex: 160,
+    elevation: 160,
   },
   superBall: {
     position: 'absolute',
@@ -734,6 +1016,48 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     borderWidth: 1,
     borderColor: '#111827',
+    backgroundColor: '#FFFFFF',
+  },
+  rareFxWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 62,
+  },
+  rareBall: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#0F172A',
+    overflow: 'hidden',
+  },
+  rareBallTop: {
+    flex: 1,
+    backgroundColor: '#38BDF8',
+  },
+  rareBallBottom: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  rareBallBand: {
+    position: 'absolute',
+    top: 10,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#0F172A',
+  },
+  rareBallCenter: {
+    position: 'absolute',
+    top: 7,
+    left: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#0F172A',
     backgroundColor: '#FFFFFF',
   },
 });

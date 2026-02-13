@@ -1,12 +1,14 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
-import { Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withSequence,
+  withRepeat,
   runOnJS,
   runOnUI,
   interpolate,
@@ -62,6 +64,13 @@ export default function SwipeCard({
   const translateY = useSharedValue(0);
   const rotate = useSharedValue(0);
   const isSwiping = useSharedValue(false);
+  const superSwipeLift = useSharedValue(0);
+  const likeButtonScale = useSharedValue(1);
+  const dislikeButtonScale = useSharedValue(1);
+  const likeButtonRotate = useSharedValue(0);
+  const dislikeButtonRotate = useSharedValue(0);
+  const likeButtonFloat = useSharedValue(0);
+  const dislikeButtonFloat = useSharedValue(0);
 
   const gradientColors = useMemo(() => {
     const primaryType = pokemon.types?.[0]?.toLowerCase() || 'normal';
@@ -133,6 +142,7 @@ export default function SwipeCard({
 
     isSwiping.value = true;
     rotate.value = withTiming(0, { duration: 120 });
+    superSwipeLift.value = withTiming(1, { duration: 140 });
     translateY.value = withTiming(
       -UI.screen.height,
       { duration: UI.swipe.swipeDuration },
@@ -144,6 +154,7 @@ export default function SwipeCard({
         translateX.value = 0;
         translateY.value = 0;
         rotate.value = 0;
+        superSwipeLift.value = 0;
         isSwiping.value = false;
       }
     );
@@ -179,19 +190,78 @@ export default function SwipeCard({
         translateX.value = withSpring(0, { damping: 15, stiffness: 150 });
         translateY.value = withSpring(0, { damping: 15, stiffness: 150 });
         rotate.value = withSpring(0, { damping: 15, stiffness: 150 });
+        superSwipeLift.value = withSpring(0, { damping: 14, stiffness: 170 });
       }
     });
 
-  const animatedCardStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { rotate: `${rotate.value}deg` },
-    ],
-  }));
+  const animatedCardStyle = useAnimatedStyle(() => {
+    const liftScale = interpolate(superSwipeLift.value, [0, 1], [1, 1.06], Extrapolate.CLAMP);
+    const liftY = interpolate(superSwipeLift.value, [0, 1], [0, -18], Extrapolate.CLAMP);
+
+    return {
+      zIndex: superSwipeLift.value > 0.05 ? 60 : 1,
+      elevation: interpolate(superSwipeLift.value, [0, 1], [10, 22], Extrapolate.CLAMP),
+      transform: [
+        { translateX: translateX.value },
+        { translateY: translateY.value + liftY },
+        { rotate: `${rotate.value}deg` },
+        { scale: liftScale },
+      ],
+    };
+  });
 
   const animateSwipe = (direction: 'left' | 'right') => {
     runOnUI(runSwipeAnimation)(direction);
+  };
+
+  useEffect(() => {
+    if (!isInteractive) return;
+
+    likeButtonFloat.value = withRepeat(
+      withSequence(withTiming(-3, { duration: 760 }), withTiming(0, { duration: 760 })),
+      -1,
+      false
+    );
+
+    dislikeButtonFloat.value = withRepeat(
+      withSequence(withTiming(-3, { duration: 700 }), withTiming(0, { duration: 700 })),
+      -1,
+      false
+    );
+  }, [dislikeButtonFloat, isInteractive, likeButtonFloat]);
+
+  const handleLikePressIn = () => {
+    likeButtonScale.value = withTiming(0.9, { duration: 90 });
+    likeButtonRotate.value = withTiming(8, { duration: 90 });
+  };
+
+  const handleLikePressOut = () => {
+    likeButtonScale.value = withSpring(1, { damping: 10, stiffness: 180 });
+    likeButtonRotate.value = withSpring(0, { damping: 10, stiffness: 180 });
+  };
+
+  const handleDislikePressIn = () => {
+    dislikeButtonScale.value = withTiming(0.9, { duration: 90 });
+    dislikeButtonRotate.value = withTiming(-8, { duration: 90 });
+  };
+
+  const handleDislikePressOut = () => {
+    dislikeButtonScale.value = withSpring(1, { damping: 10, stiffness: 180 });
+    dislikeButtonRotate.value = withSpring(0, { damping: 10, stiffness: 180 });
+  };
+
+  const triggerLikeButtonCelebration = () => {
+    likeButtonScale.value = withSequence(
+      withTiming(1.12, { duration: 110 }),
+      withSpring(1, { damping: 11, stiffness: 210 })
+    );
+  };
+
+  const triggerDislikeButtonCelebration = () => {
+    dislikeButtonScale.value = withSequence(
+      withTiming(1.1, { duration: 110 }),
+      withSpring(1, { damping: 11, stiffness: 210 })
+    );
   };
 
   const likeOverlayStyle = useAnimatedStyle(() => {
@@ -227,6 +297,22 @@ export default function SwipeCard({
 
     return { opacity, transform: [{ scale }] };
   });
+
+  const likeButtonAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: likeButtonFloat.value },
+      { scale: likeButtonScale.value },
+      { rotate: `${likeButtonRotate.value}deg` },
+    ],
+  }));
+
+  const dislikeButtonAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: dislikeButtonFloat.value },
+      { scale: dislikeButtonScale.value },
+      { rotate: `${dislikeButtonRotate.value}deg` },
+    ],
+  }));
 
   return (
     <GestureDetector gesture={panGesture}>
@@ -309,29 +395,49 @@ export default function SwipeCard({
         </View>
 
         <View style={styles.buttonsContainer}>
-          <Pressable
-            disabled={!isInteractive}
-            onPress={() => animateSwipe('left')}
-            style={[
-              styles.actionButton,
-              { backgroundColor: theme.dislikeBg, borderColor: typeAccentColor },
-              !isInteractive && styles.disabledButton,
-            ]}
-          >
-            <Ionicons name="close" size={30} color={theme.textPrimary} />
-          </Pressable>
+          <Animated.View style={dislikeButtonAnimatedStyle}>
+            <Pressable
+              disabled={!isInteractive}
+              onPressIn={handleDislikePressIn}
+              onPressOut={handleDislikePressOut}
+              onPress={() => {
+                triggerDislikeButtonCelebration();
+                animateSwipe('left');
+              }}
+              style={[
+                styles.actionButton,
+                styles.dislikeActionButton,
+                { borderColor: typeAccentColor },
+                !isInteractive && styles.disabledButton,
+              ]}
+            >
+              <View style={[styles.iconFillCircle, styles.dislikeFillCircle]}>
+                <MaterialCommunityIcons name="close-thick" size={34} color="#FFFFFF" />
+              </View>
+            </Pressable>
+          </Animated.View>
 
-          <Pressable
-            disabled={!isInteractive}
-            onPress={() => animateSwipe('right')}
-            style={[
-              styles.actionButton,
-              { backgroundColor: theme.likeBg, borderColor: typeAccentColor },
-              !isInteractive && styles.disabledButton,
-            ]}
-          >
-            <Ionicons name="heart" size={26} color={theme.textPrimary} />
-          </Pressable>
+          <Animated.View style={likeButtonAnimatedStyle}>
+            <Pressable
+              disabled={!isInteractive}
+              onPressIn={handleLikePressIn}
+              onPressOut={handleLikePressOut}
+              onPress={() => {
+                triggerLikeButtonCelebration();
+                animateSwipe('right');
+              }}
+              style={[
+                styles.actionButton,
+                styles.likeActionButton,
+                { borderColor: typeAccentColor },
+                !isInteractive && styles.disabledButton,
+              ]}
+            >
+              <View style={[styles.iconFillCircle, styles.likeFillCircle]}>
+                <MaterialCommunityIcons name="heart" size={32} color="#FFFFFF" />
+              </View>
+            </Pressable>
+          </Animated.View>
         </View>
       </Animated.View>
     </GestureDetector>
@@ -456,12 +562,39 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   actionButton: {
-    width: 64,
-    height: 64,
-    borderWidth: 3,
+    width: 78,
+    height: 78,
+    borderWidth: 4,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 7,
+  },
+  dislikeActionButton: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#EF4444',
+  },
+  likeActionButton: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#10B981',
+  },
+  iconFillCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  likeFillCircle: {
+    backgroundColor: '#10B981',
+  },
+  dislikeFillCircle: {
+    backgroundColor: '#EF4444',
   },
   disabledButton: {
     opacity: 0.35,
